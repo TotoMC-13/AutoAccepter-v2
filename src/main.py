@@ -1,27 +1,17 @@
 import flet as ft
-import time
+from accepter import LcuHandler
+
+lcu = LcuHandler()
 
 def main(page: ft.Page):
     page.title = "AutoAccepter v2"
     page.vertical_alignment = ft.MainAxisAlignment.CENTER # Para centrar visualmente
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER # Para centrar visualmente
 
-    def add_clicked(e):
-        page.add(ft.Checkbox(label=new_task.value))
-        new_task.value = ""
-        new_task.focus()
-        new_task.update()
+    async def button_click_handler(e): # Definir una función async separada para mayor claridad
+        await lcu.toggle_auto_accept_loop()
 
-    new_task = ft.TextField(label="What's needs to be done?", width=300)
-
-    page.add(
-        ft.Column(
-            [
-                new_task,
-                ft.ElevatedButton("Add", on_click=add_clicked),
-            ],
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-        )
-    )
+    button = ft.ElevatedButton(text="Test!", on_click=button_click_handler) # Esto NO funciona, falta arreglarlo.
+    page.add(button)
 
 ft.app(target=main, assets_dir="assets")

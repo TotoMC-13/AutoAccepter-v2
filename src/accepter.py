@@ -29,6 +29,36 @@ class LcuHandler:
         
         self.session = None
 
+    def reinitialize(self):
+        print("Auto-Accepter: Re-attempting LCU connection...")
+        # Reset connection state flags and data
+        self.is_connected = False
+        self.lockfile_data = None
+        self.password = None
+        self.base_url = None
+        self.headers = None
+        self.auth = None
+
+        self.lockfile_path = self.set_lockfile_path()
+        self.lockfile_data = self.read_lol_lockfile_data() # This sets self.is_connected
+
+        if self.is_connected and self.lockfile_data:
+            self.password = self.lockfile_data["password"]
+            self.base_url, self.headers = self.get_lcu_connection_details()
+            self.auth = aiohttp.BasicAuth('riot', self.password)
+            print("Auto-Accepter: Successfully re-initialized LCU details.")
+        else:
+            # Ensure all connection-related attributes are None if reinitialization fails
+            self.password = None
+            self.base_url = None
+            self.headers = None
+            self.auth = None
+            print("Auto-Accepter: Failed to re-initialize LCU details. LCU might not be running or lockfile is inaccessible.")
+        
+        # Note: This does not affect an existing self.session.
+        # Session management is handled by __aenter__ and __aexit__.
+        # If a session is active, it will continue to use old parameters until it's closed and reopened.
+
 
     async def __aenter__(self):
         if self.is_connected:
