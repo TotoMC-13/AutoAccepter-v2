@@ -9,11 +9,11 @@ LCU_ACCEPT_ENDPOINT = "/lol-matchmaking/v1/ready-check/accept"
 LCU_GAMEFLOW_STATE_ENDPOINT = "/lol-gameflow/v1/gameflow-phase"
 
 class LcuHandler:
-
     def __init__(self):
         self.lockfile_path = self.set_lockfile_path()
         self.lockfile_data = self.read_lol_lockfile_data() # This sets self.is_connected
         self.accepter_running = False
+        self._accepter_task = None
 
         if self.is_connected and self.lockfile_data:
             self.password = self.lockfile_data["password"]
@@ -25,7 +25,7 @@ class LcuHandler:
             self.headers = None
             self.auth = None
             # self.is_connected is already False from read_lol_lockfile_data
-            print("Failed to initialize LCU connection details.")
+            print("Auto-Accepter: Fallo al inicializar los detalles de la conexion con LCU.")
         
         self.session = None
 
@@ -88,7 +88,7 @@ class LcuHandler:
     
     async def make_request(self, endpoint, method="GET", json_payload=None):
         if not self.is_connected or not self.session:
-            print("Cannot make request: LCU not connected or session not initialized.")
+            print("Auto-Accepter: No se pudo hacer el request, LCU no conectado.")
             return None, None
             
         complete_url = f"{self.base_url}{endpoint}"
@@ -106,32 +106,51 @@ class LcuHandler:
         except asyncio.TimeoutError:
             print(f"Request timed out: {method} {complete_url}")
             return None, None
-    
+
     async def run_auto_accept_loop(self):
         if not self.is_connected:
-            print("Cannot run auto accept loop: LCU not connected.")
+            print("Auto-Accepter: No se pudo ejecutar el bucle, LCU no conectado.")
             return
         
         self.accepter_running = True
 
         while self.accepter_running:
             _, gameflow_json = await self.make_request(LCU_GAMEFLOW_STATE_ENDPOINT)
-
-            if gameflow_json == 'Lobby':
-                print("Esperando en el lobby.")
+            
+            if gameflow_json == "None":
+                print("Auto-Accepter: No estas en un lobby, esperando.")
+            elif gameflow_json == 'Lobby':
+                print("Auto-Accepter: Esperando en el lobby.")
             elif gameflow_json == "Matchmaking":
-                print("Buscando partida.")
+                print("Auto-Accepter: Buscando partida.")
 
             if gameflow_json == "ReadyCheck":
                 _, ready_check_json = await self.make_request(LCU_READY_CHECK_ENDPOINT)
                 if ready_check_json["state"] == "InProgress":            
-                    print("Partida encontrada, aceptando...")
+                    print("Auto-Accepter: Partida encontrada, aceptando...")
                     await self.make_request(LCU_ACCEPT_ENDPOINT, method="POST")
-                    print("Partida aceptada.")
+                    print("Auto-Accepter: Partida aceptada.")
+            elif gameflow_json == "InProgress":
+                self.accepter_running = False
             
             await asyncio.sleep(3)
-        
-        print("El autoaccepter se detuvo exitosamente.")
+
+    async def toggle_auto_accept_loop(self):
+        if not self.accepter_running:
+            self._accepter_task = asyncio.create_task(self.run_auto_accept_loop())
+            print("Auto-Accepter: Bucle iniciado.")
+        else:
+            try:
+                self.accepter_running = False
+                await asyncio.wait_for(self._accepter_task, timeout=5.0)
+                print("Auto-Accepter: Bucle detenido.")
+            except asyncio.TimeoutError:
+                print("Auto-Accepter: No se pudo detener el bucle correctamente, forzando cierre...")
+                self._accepter_task.cancel()
+            except asyncio.CancelledError:
+                print("Auto-Accepter: Tarea ya había sido cancelada al detener.")
+            except Exception as e:
+                     print(f"Auto-Accepter: Error inesperado al intentar detener la tarea: {e}")
     
     def print_data(self):
         print(f"\n{self.lockfile_data}") # Ej: {'process_name': 'LeagueClient', 'process_id': 17968, 'port': 51308, 'password': 'mQr8OsqYuL-CP3DVr1msrQ', 'protocol': 'https'}
@@ -139,7 +158,22 @@ class LcuHandler:
 async def main():
     async with LcuHandler() as lcu:
         if lcu.is_connected:
-            await lcu.run_auto_accept_loop()
+            print("Intentando iniciar con toggle...")
+            await lcu.toggle_auto_accept_loop()
 
-if __name__ == "__main__":
+            await asyncio.sleep(15)
+
+            print("Intentando detener con toggle...")
+            await lcu.toggle_auto_accept_loop()
+            
+            if lcu._accepter_task and lcu._accepter_task.cancelled():
+                 try:
+                     await lcu._accepter_task
+                 except asyncio.CancelledError:
+                     print("Tarea del accepter fue cancelada limpiamente.")
+            print("Test del toggle finalizado.")
+        else:
+            print("No conectado a LCU, no se puede probar el toggle.")
+
+if __name__ == "__main__":  
     asyncio.run(main())
