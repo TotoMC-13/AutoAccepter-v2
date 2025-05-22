@@ -54,11 +54,6 @@ class LcuHandler:
             self.headers = None
             self.auth = None
             print("Auto-Accepter: Failed to re-initialize LCU details. LCU might not be running or lockfile is inaccessible.")
-        
-        # Note: This does not affect an existing self.session.
-        # Session management is handled by __aenter__ and __aexit__.
-        # If a session is active, it will continue to use old parameters until it's closed and reopened.
-
 
     async def __aenter__(self):
         if self.is_connected:
@@ -162,6 +157,7 @@ class LcuHandler:
                     print("Auto-Accepter: Partida aceptada.")
             elif gameflow_json == "InProgress":
                 self.accepter_running = False
+                print("Partida en progreso.")
             
             await asyncio.sleep(3)
 
@@ -185,25 +181,44 @@ class LcuHandler:
     def print_data(self):
         print(f"\n{self.lockfile_data}") # Ej: {'process_name': 'LeagueClient', 'process_id': 17968, 'port': 51308, 'password': 'mQr8OsqYuL-CP3DVr1msrQ', 'protocol': 'https'}
 
+# async def main():
+#     async with LcuHandler() as lcu:
+#         if lcu.is_connected:
+#             print("Intentando iniciar con toggle...")
+#             await lcu.toggle_auto_accept_loop()
+
+#             await asyncio.sleep(15)
+
+#             print("Intentando detener con toggle...")
+#             await lcu.toggle_auto_accept_loop()
+            
+#             if lcu._accepter_task and lcu._accepter_task.cancelled():
+#                  try:
+#                      await lcu._accepter_task
+#                  except asyncio.CancelledError:
+#                      print("Tarea del accepter fue cancelada limpiamente.")
+#             print("Test del toggle finalizado.")
+#         else:
+#             print("No conectado a LCU, no se puede probar el toggle.")
+
 async def main():
     async with LcuHandler() as lcu:
         if lcu.is_connected:
-            print("Intentando iniciar con toggle...")
             await lcu.toggle_auto_accept_loop()
-
-            await asyncio.sleep(15)
-
-            print("Intentando detener con toggle...")
-            await lcu.toggle_auto_accept_loop()
-            
-            if lcu._accepter_task and lcu._accepter_task.cancelled():
-                 try:
-                     await lcu._accepter_task
-                 except asyncio.CancelledError:
-                     print("Tarea del accepter fue cancelada limpiamente.")
-            print("Test del toggle finalizado.")
+            if lcu._accepter_task:
+                try:
+                    await lcu._accepter_task
+                except asyncio.CancelledError:
+                    print("Auto-Accepter: Tarea principal cancelada (ej. por Ctrl+C o cierre del programa).")
+                    if not lcu._accepter_task.done():
+                        lcu._accepter_task.cancel()
+            else:
+                print("Auto-Accepter: No se pudo iniciar la tarea del bucle.")
         else:
-            print("No conectado a LCU, no se puede probar el toggle.")
+            print("Auto-Accepter: No conectado a LCU. El bucle no se iniciará.")
 
 if __name__ == "__main__":  
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Auto-Accepter: Programa interrumpido por el usuario (Ctrl+C).")
