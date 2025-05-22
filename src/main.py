@@ -1,7 +1,6 @@
 import flet as ft
 from accepter import LcuHandler
-
-lcu = LcuHandler()
+import asyncio
 
 def main(page: ft.Page):
     page.title = "AutoAccepter v2"
@@ -9,9 +8,22 @@ def main(page: ft.Page):
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER # Para centrar visualmente
 
     async def button_click_handler(e): # Definir una función async separada para mayor claridad
-        await lcu.toggle_auto_accept_loop()
+        async with LcuHandler() as lcu:
+            if lcu.is_connected:
+                await lcu.toggle_auto_accept_loop()
+                if lcu._accepter_task:
+                    try:
+                        await lcu._accepter_task
+                    except asyncio.CancelledError:
+                        print("Auto-Accepter: Tarea principal cancelada (ej. por Ctrl+C o cierre del programa).")
+                        if not lcu._accepter_task.done():
+                            lcu._accepter_task.cancel()
+                else:
+                    print("Auto-Accepter: No se pudo iniciar la tarea del bucle.")
+            else:
+                print("Auto-Accepter: No conectado a LCU. El bucle no se iniciará.")
 
-    button = ft.ElevatedButton(text="Test!", on_click=button_click_handler) # Esto NO funciona, falta arreglarlo.
+    button = ft.ElevatedButton(text="Test!", on_click=button_click_handler)
     page.add(button)
 
 ft.app(target=main, assets_dir="assets")

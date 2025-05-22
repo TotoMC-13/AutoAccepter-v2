@@ -27,7 +27,7 @@ class LcuHandler:
             # self.is_connected is already False from read_lol_lockfile_data
             print("Auto-Accepter: Fallo al inicializar los detalles de la conexion con LCU.")
         
-        self.session = None
+        self.session = None # After this it goes to __aenter__
 
     def reinitialize(self):
         print("Auto-Accepter: Re-attempting LCU connection...")
@@ -142,7 +142,7 @@ class LcuHandler:
         while self.accepter_running:
             _, gameflow_json = await self.make_request(LCU_GAMEFLOW_STATE_ENDPOINT)
             
-            if gameflow_json == "None":
+            if not gameflow_json:
                 print("Auto-Accepter: No estas en un lobby, esperando.")
             elif gameflow_json == 'Lobby':
                 print("Auto-Accepter: Esperando en el lobby.")
