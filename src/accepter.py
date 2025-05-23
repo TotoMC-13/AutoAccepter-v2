@@ -27,7 +27,7 @@ class LcuHandler:
             # self.is_connected is already False from read_lol_lockfile_data
             print("Auto-Accepter: Fallo al inicializar los detalles de la conexion con LCU.")
         
-        self.session = None # After this it goes to __aenter__
+        self.session = None
 
     def reinitialize(self):
         print("Auto-Accepter: Re-attempting LCU connection...")
@@ -184,41 +184,23 @@ class LcuHandler:
 # async def main():
 #     async with LcuHandler() as lcu:
 #         if lcu.is_connected:
-#             print("Intentando iniciar con toggle...")
 #             await lcu.toggle_auto_accept_loop()
-
-#             await asyncio.sleep(15)
-
-#             print("Intentando detener con toggle...")
-#             await lcu.toggle_auto_accept_loop()
-            
-#             if lcu._accepter_task and lcu._accepter_task.cancelled():
-#                  try:
-#                      await lcu._accepter_task
-#                  except asyncio.CancelledError:
-#                      print("Tarea del accepter fue cancelada limpiamente.")
-#             print("Test del toggle finalizado.")
+#             if lcu._accepter_task:
+#                 await asyncio.sleep(5)
+#                 await lcu.toggle_auto_accept_loop()
+#                 try:
+#                     await lcu._accepter_task
+#                 except asyncio.CancelledError:
+#                     print("Auto-Accepter: Tarea principal cancelada (ej. por Ctrl+C o cierre del programa).")
+#                     if not lcu._accepter_task.done():
+#                         lcu._accepter_task.cancel()
+#             else:
+#                 print("Auto-Accepter: No se pudo iniciar la tarea del bucle.")
 #         else:
-#             print("No conectado a LCU, no se puede probar el toggle.")
+#             print("Auto-Accepter: No conectado a LCU. El bucle no se iniciará.")
 
-async def main():
-    async with LcuHandler() as lcu:
-        if lcu.is_connected:
-            await lcu.toggle_auto_accept_loop()
-            if lcu._accepter_task:
-                try:
-                    await lcu._accepter_task
-                except asyncio.CancelledError:
-                    print("Auto-Accepter: Tarea principal cancelada (ej. por Ctrl+C o cierre del programa).")
-                    if not lcu._accepter_task.done():
-                        lcu._accepter_task.cancel()
-            else:
-                print("Auto-Accepter: No se pudo iniciar la tarea del bucle.")
-        else:
-            print("Auto-Accepter: No conectado a LCU. El bucle no se iniciará.")
-
-if __name__ == "__main__":  
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("Auto-Accepter: Programa interrumpido por el usuario (Ctrl+C).")
+# if __name__ == "__main__":  
+#     try:
+#         asyncio.run(main())
+#     except KeyboardInterrupt:
+#         print("Auto-Accepter: Programa interrumpido por el usuario (Ctrl+C).")
