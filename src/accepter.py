@@ -14,6 +14,7 @@ class LcuHandler:
         self.lockfile_data = self.read_lol_lockfile_data() # This sets self.is_connected
         self.accepter_running = False
         self._accepter_task = None
+        self.session = None # Initialize session
 
         if self.is_connected and self.lockfile_data:
             self.password = self.lockfile_data["password"]
@@ -24,20 +25,19 @@ class LcuHandler:
             self.base_url = None
             self.headers = None
             self.auth = None
-            # self.is_connected is already False from read_lol_lockfile_data
             print("Auto-Accepter: Fallo al inicializar los detalles de la conexion con LCU.")
         
-        self.session = None
+
 
     def reinitialize(self):
         print("Auto-Accepter: Re-attempting LCU connection...")
-        # Reset connection state flags and data
         self.is_connected = False
         self.lockfile_data = None
         self.password = None
         self.base_url = None
         self.headers = None
         self.auth = None
+        # Ensure session closes if it existed
 
         self.lockfile_path = self.set_lockfile_path()
         self.lockfile_data = self.read_lol_lockfile_data() # This sets self.is_connected
@@ -48,23 +48,28 @@ class LcuHandler:
             self.auth = aiohttp.BasicAuth('riot', self.password)
             print("Auto-Accepter: Successfully re-initialized LCU details.")
         else:
-            # Ensure all connection-related attributes are None if reinitialization fails
             self.password = None
             self.base_url = None
             self.headers = None
             self.auth = None
             print("Auto-Accepter: Failed to re-initialize LCU details. LCU might not be running or lockfile is inaccessible.")
 
-    async def __aenter__(self):
-        if self.is_connected:
-            # Disable SSL verification
-            connector = aiohttp.TCPConnector(ssl=False)
-            self.session = aiohttp.ClientSession(connector=connector, auth=self.auth, headers=self.headers)
-        return self
+    async def _ensure_session_started(self):
+        if not self.session or self.session.closed:
+            if self.is_connected and self.auth and self.headers:
+                connector = aiohttp.TCPConnector(ssl=False)
+                self.session = aiohttp.ClientSession(connector=connector, auth=self.auth, headers=self.headers)
+                print("Auto-Accepter: Session (re)started.")
+            else:
+                print("Auto-Accepter: Cannot start session, LCU details missing.")
+                return False
+        return True
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        if self.session:
+    async def _close_session_if_exists(self):
+        if self.session and not self.session.closed:
             await self.session.close()
+            self.session = None
+            print("Auto-Accepter: Session closed.")
 
     def set_lockfile_path(self):
         system = platform.system()
@@ -112,95 +117,135 @@ class LcuHandler:
         return base_url, headers
     
     async def make_request(self, endpoint, method="GET", json_payload=None):
-        if not self.is_connected or not self.session:
+        if not self.is_connected:
             print("Auto-Accepter: No se pudo hacer el request, LCU no conectado.")
             return None, None
+        
+        if not await self._ensure_session_started(): # Ensure session is active.
+             print("Auto-Accepter: No se pudo hacer el request, sesión no activa.")
+             return None, None
             
         complete_url = f"{self.base_url}{endpoint}"
         
         try:
             async with self.session.request(method, complete_url, json=json_payload, timeout=aiohttp.ClientTimeout(total=5)) as response:
-                # For debugging
                 response_json = await response.json()
-                # formatted_json = json.dumps(response_json, indent=2, ensure_ascii=False)
-                # print(f"\n{formatted_json}")
                 return response, response_json
         except aiohttp.ClientError as e:
             print(f"Request failed: {e}")
+            # We could try to close and reopen the session in the next try
+            # await self._close_session_if_exists() or handle this inside the loop.
             return None, None
         except asyncio.TimeoutError:
             print(f"Request timed out: {method} {complete_url}")
             return None, None
+        except Exception as e:
+            print(f"An unexpected error occurred during request: {e}")
+            await self._close_session_if_exists() # Tries closing the session if an unexpected error happens.
+            return None, None
+
 
     async def run_auto_accept_loop(self):
         if not self.is_connected:
             print("Auto-Accepter: No se pudo ejecutar el bucle, LCU no conectado.")
+            self.accepter_running = False
+            return
+
+        if not await self._ensure_session_started():
+            print("Auto-Accepter: No se pudo iniciar la sesión para el bucle.")
+            self.accepter_running = False
             return
         
         self.accepter_running = True
+        print("Auto-Accepter: Bucle interno iniciado.")
 
-        while self.accepter_running:
-            _, gameflow_json = await self.make_request(LCU_GAMEFLOW_STATE_ENDPOINT)
+        try:
+            while self.accepter_running:
+                if not self.is_connected:
+                    print("Auto-Accepter: LCU desconectado durante el bucle. Intentando reconectar...")
+                    self.reinitialize()
+                    if not self.is_connected:
+                        print("Auto-Accepter: Falla al reconectar. Deteniendo bucle.")
+                        self.accepter_running = False
+                        break
+                    else: # If it reconnects, re-ensure the session.
+                        if not await self._ensure_session_started():
+                            print("Auto-Accepter: Falla al reiniciar sesión tras reconexión. Deteniendo bucle.")
+                            self.accepter_running = False
+                            break
+                
+                _, gameflow_json = await self.make_request(LCU_GAMEFLOW_STATE_ENDPOINT)
             
-            if not gameflow_json:
-                print("Auto-Accepter: No estas en un lobby, esperando.")
-            elif gameflow_json == 'Lobby':
-                print("Auto-Accepter: Esperando en el lobby.")
-            elif gameflow_json == "Matchmaking":
-                print("Auto-Accepter: Buscando partida.")
+                if not self.accepter_running: break # Quit if it stops during the request
 
-            if gameflow_json == "ReadyCheck":
-                _, ready_check_json = await self.make_request(LCU_READY_CHECK_ENDPOINT)
-                if ready_check_json["state"] == "InProgress":            
-                    print("Auto-Accepter: Partida encontrada, aceptando...")
-                    await self.make_request(LCU_ACCEPT_ENDPOINT, method="POST")
-                    print("Auto-Accepter: Partida aceptada.")
-            elif gameflow_json == "InProgress":
-                self.accepter_running = False
-                print("Partida en progreso.")
+                if not gameflow_json:
+                    print("Auto-Accepter: No estas en un lobby o error de API, esperando.")
+                elif gameflow_json == 'Lobby':
+                    print("Auto-Accepter: Esperando en el lobby.")
+                elif gameflow_json == "Matchmaking":
+                    print("Auto-Accepter: Buscando partida.")
+
+                if gameflow_json == "ReadyCheck":
+                    _, ready_check_json = await self.make_request(LCU_READY_CHECK_ENDPOINT)
+                    if not self.accepter_running: break 
+
+                    if ready_check_json and ready_check_json.get("state") == "InProgress":            
+                        print("Auto-Accepter: Partida encontrada, aceptando...")
+                        await self.make_request(LCU_ACCEPT_ENDPOINT, method="POST")
+                        print("Auto-Accepter: Partida aceptada.")
+                elif gameflow_json == "InProgress":
+                    print("Partida en progreso. Deteniendo auto-accepter temporalmente.")
+                    self.accepter_running = False
             
-            await asyncio.sleep(3)
+                await asyncio.sleep(3)
+        except Exception as e:
+            print(f"Auto-Accepter: Error inesperado en el bucle principal: {e}")
+        finally:
+            print("Auto-Accepter: Bucle interno finalizado.")
+            await self._close_session_if_exists()
+            self.accepter_running = False # Asegurar que el estado es correcto al salir
 
     async def toggle_auto_accept_loop(self):
         if not self.accepter_running:
+            if not self.is_connected:
+                print("Auto-Accepter: LCU no conectado. Intentando inicializar...")
+                self.reinitialize()
+            
+            if not self.is_connected:
+                print("Auto-Accepter: No se puede iniciar el bucle, LCU sigue sin conectar.")
+                if self.accepter_running: 
+                    self.accepter_running = False
+                return
+
+            self.accepter_running = True 
+            print("Auto-Accepter: Solicitando inicio del bucle...")
             self._accepter_task = asyncio.create_task(self.run_auto_accept_loop())
-            print("Auto-Accepter: Bucle iniciado.")
-        else:
-            try:
+        else: # Its running and we want to stop it.
+            if self._accepter_task:
+                print("Auto-Accepter: Intentando detener el bucle...")
+                self.accepter_running = False # Stop the loop.
+                try:
+                    # Dar tiempo al bucle para que termine limpiamente
+                    await asyncio.wait_for(self._accepter_task, timeout=7.0) 
+                    print("Auto-Accepter: Bucle detenido correctamente.")
+                except asyncio.TimeoutError:
+                    print("Auto-Accepter: El bucle no se detuvo a tiempo, forzando cancelación...")
+                    self._accepter_task.cancel()
+                    try:
+                        await self._accepter_task # Waiting for it to stop.
+                    except asyncio.CancelledError:
+                        print("Auto-Accepter: Tarea del bucle cancelada forzosamente.")
+                except asyncio.CancelledError: # If the task was already canceled.
+                     print("Auto-Accepter: La tarea del bucle ya había sido cancelada.")
+                except Exception as e:
+                    print(f"Auto-Accepter: Error inesperado al intentar detener la tarea: {e}")
+                finally:
+                    self._accepter_task = None
+                    # self.accepter_running already is false..
+            else:
+                print("Auto-Accepter: Estado inconsistente - accepter_running es True pero no hay tarea. Reseteando.")
                 self.accepter_running = False
-                await asyncio.wait_for(self._accepter_task, timeout=5.0)
-                print("Auto-Accepter: Bucle detenido.")
-            except asyncio.TimeoutError:
-                print("Auto-Accepter: No se pudo detener el bucle correctamente, forzando cierre...")
-                self._accepter_task.cancel()
-            except asyncio.CancelledError:
-                print("Auto-Accepter: Tarea ya había sido cancelada al detener.")
-            except Exception as e:
-                     print(f"Auto-Accepter: Error inesperado al intentar detener la tarea: {e}")
+                await self._close_session_if_exists()
     
     def print_data(self):
         print(f"\n{self.lockfile_data}") # Ej: {'process_name': 'LeagueClient', 'process_id': 17968, 'port': 51308, 'password': 'mQr8OsqYuL-CP3DVr1msrQ', 'protocol': 'https'}
-
-# async def main():
-#     async with LcuHandler() as lcu:
-#         if lcu.is_connected:
-#             await lcu.toggle_auto_accept_loop()
-#             if lcu._accepter_task:
-#                 await asyncio.sleep(5)
-#                 await lcu.toggle_auto_accept_loop()
-#                 try:
-#                     await lcu._accepter_task
-#                 except asyncio.CancelledError:
-#                     print("Auto-Accepter: Tarea principal cancelada (ej. por Ctrl+C o cierre del programa).")
-#                     if not lcu._accepter_task.done():
-#                         lcu._accepter_task.cancel()
-#             else:
-#                 print("Auto-Accepter: No se pudo iniciar la tarea del bucle.")
-#         else:
-#             print("Auto-Accepter: No conectado a LCU. El bucle no se iniciará.")
-
-# if __name__ == "__main__":  
-#     try:
-#         asyncio.run(main())
-#     except KeyboardInterrupt:
-#         print("Auto-Accepter: Programa interrumpido por el usuario (Ctrl+C).")

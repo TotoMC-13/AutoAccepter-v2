@@ -2,28 +2,52 @@ import flet as ft
 from accepter import LcuHandler
 import asyncio
 
+lcu = LcuHandler()
+
 def main(page: ft.Page):
     page.title = "AutoAccepter v2"
-    page.vertical_alignment = ft.MainAxisAlignment.CENTER # Para centrar visualmente
-    page.horizontal_alignment = ft.CrossAxisAlignment.CENTER # Para centrar visualmente
+    page.vertical_alignment = ft.MainAxisAlignment.CENTER
+    page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
 
-    async def button_click_handler(e): # Definir una función async separada para mayor claridad
-        async with LcuHandler() as lcu:
-            if lcu.is_connected:
-                await lcu.toggle_auto_accept_loop()
-                if lcu._accepter_task:
-                    try:
-                        await lcu._accepter_task
-                    except asyncio.CancelledError:
-                        print("Auto-Accepter: Tarea principal cancelada (ej. por Ctrl+C o cierre del programa).")
-                        if not lcu._accepter_task.done():
-                            lcu._accepter_task.cancel()
-                else:
-                    print("Auto-Accepter: No se pudo iniciar la tarea del bucle.")
+    button_text_start = "Iniciar Auto Accepter"
+    button_text_stop = "Detener Auto Accepter"
+
+    async def button_click_handler(e):
+        if not lcu.is_connected:
+            print("Auto-Accepter: Intentando reconectar con LCU...")
+            lcu.reinitialize() # Intenta reconectar si no está conectado
+
+        if lcu.is_connected:
+            await lcu.toggle_auto_accept_loop() # Esta función maneja el inicio/parada
+            if lcu.accepter_running:
+                button.text = button_text_stop
+                print("Auto-Accepter: Estado actual -> Corriendo")
             else:
-                print("Auto-Accepter: No conectado a LCU. El bucle no se iniciará.")
+                button.text = button_text_start
+                print("Auto-Accepter: Estado actual -> Detenido")
+        else:
+            button.text = button_text_start # Asegurar texto inicial si no hay conexión
+            print("Auto-Accepter: No conectado a LCU. El bucle no se iniciará/detendrá.")
+            # Podrías mostrar un diálogo de error al usuario aquí
+            # page.show_dialog(...)
+        page.update() # Actualiza la UI para mostrar el nuevo texto del botón
+            
 
-    button = ft.ElevatedButton(text="Test!", on_click=button_click_handler)
+    button = ft.ElevatedButton(
+        text=button_text_start,  # Texto inicial
+        on_click=button_click_handler
+    )
     page.add(button)
+
+    # Inicializar el texto del botón según el estado actual de LCU al cargar la página
+    # Esto es útil si el estado persiste entre reinicios de la UI (aunque aquí no lo hace)
+    # o si el bucle podría estar corriendo desde una sesión anterior (no aplicable aquí directamente).
+    # Principalmente asegura que el texto sea correcto al inicio.
+    if lcu.is_connected and lcu.accepter_running:
+        button.text = button_text_stop
+    else:
+        button.text = button_text_start
+    page.update()
+
 
 ft.app(target=main, assets_dir="assets")
