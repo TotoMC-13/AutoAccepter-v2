@@ -8,7 +8,8 @@ authors = [
     { name = "TotoMC", email = "tomasazcaray@gmail.com" }
 ]
 dependencies = [
-  "flet==0.28.3"
+  "flet==0.28.3",
+  "aiohttp"
 ]
 
 [tool.flet]
